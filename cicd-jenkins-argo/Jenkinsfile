@@ -6,16 +6,27 @@ pipeline {
     }
     environment{
         SCANNER_HOME= tool 'sonarqube'
+        TRIVY_HOME= '/usr/bin/'
+        GIT_REPO_NAME = 'cicd'
+        GIT_USER_NAME = 'schets14'
     }
     stages {
         stage('GIT CHECKOUT') {
             steps {
-                git branch: 'main', changelog: false, credentialsId: 'giti_cred', poll: false, url: 'https://github.com/schets14/DevOps.git'
+                git branch: 'main', changelog: false, credentialsId: 'giti_cred', poll: false, url: 'https://github.com/schets14/cicd.git'
             }
         }
         stage('COMPILE CODE') {
             steps {
-                sh "mvn clean compile -DskipTests=true"
+                sh "pwd"
+                sh "cd cicd-jenkins-argo/ && mvn clean compile -DskipTests=true"
+            }
+        }
+        stage('START SONARQUBE CONTAINERS') {
+            steps {
+                script {
+                  sh "docker start 064befb78af7"
+                }
             }
         }
         stage('OWASP SCANNING') {
@@ -27,7 +38,8 @@ pipeline {
         stage('SONARQUBE SCANNING ANALYSIS') {
             steps {
                   withSonarQubeEnv('sonarqube-server') {
-                    sh ''' $SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=Ekart \
+                    sh ''' cd cicd-jenkins-argo && pwd \
+                    $SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=Ekart \
                     -Dsonar.java.binaries=. \
                     -Dsonar.projectKey=Ekart '''
                   }
@@ -35,31 +47,48 @@ pipeline {
         }
         stage('BUILD CODE') {
             steps {
-                sh "mvn clean package -DskipTests=true"
+                sh "cd cicd-jenkins-argo && mvn clean package -DskipTests=true"
             }
         }
         stage('DOCKER BUILD & PUSH') {
             steps {
                 script{
                     withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
-                    sh "docker build -t schets14/chetan:latest -f docker/Dockerfile ."
-                    sh "docker push schets14/chetan:latest "
-                        
+                    sh "cd cicd-jenkins-argo && docker build -t schets14/myimages:$BUILD_NUMBER -f docker/Dockerfile ."
+                    sh "docker push schets14/myimages:$BUILD_NUMBER"
                     }
-                    
                 }
             }
         }
-        stage('DEPLOY') {
+        stage('IMAGE SCAN'){
             steps {
                 script{
-                    withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
-                    sh "docker run -d  -p 8070:8070 --name=shoping-app schets14/chetan:latest"
-                        
-                    }
-                    
+                    sh "${TRIVY_HOME}/trivy image schets14/myimages:$BUILD_NUMBER > scan-result.txt"
                 }
             }
+
+        }
+        stage('UPDATE MANIFEST & PUSH TO GITHUB'){
+            steps{
+                script {
+                    def previousBuildNumber = currentBuild.getPreviousBuild()?.getNumber() ?: 0
+                    echo "Previous Completed Build Number: ${previousBuildNumber}"
+                    sh "sed -i \"s/${previousBuildNumber}/$BUILD_NUMBER/g\" cicd-jenkins-argo/manifest.yaml"
+                }
+                withCredentials([string(credentialsId: 'GITHUB_TOKEN', variable: 'GITHUB_T')]) {
+                    sh '''
+                    pwd
+                    cd cicd-jenkins-argo
+                    git config user.email "schets14@gmail.com"
+                    git config user.name "Chetan Solanki"
+                    BUILD_NUMBER=$BUILD_NUMBER
+                    git add .
+                    git commit -m "Automated commit by Jenkins"
+                    git push https://$GITHUB_T@github.com/$GIT_USER_NAME/$GIT_REPO_NAME HEAD:main
+                '''
+                }
+            }
+
         }
     }
 }
