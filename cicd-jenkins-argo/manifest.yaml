@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: shopping-cart
-          image: schets14/myimages:36 # Image that will be used to containers in the cluster
+          image: schets14/myimages:37 # Image that will be used to containers in the cluster
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8070 # The port that the container is running on in the cluster
